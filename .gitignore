@@ -1,0 +1,31 @@
+# --- 编译产物 & 运行环境 ---
+**/build/
+**/install/
+**/log/
+.catkin_tools/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- 庞大数据集 (非常重要) ---
+# 考虑到你有 collect_data 和 data_recorder，这些通常包含 GB 级别的 HDF5 或视频文件
+*.h5
+*.hdf5
+*.mp4
+*.bag
+*.mcap
+
+# --- IDE & 编辑器配置 ---
+.vscode/
+.claude/
+.idea/
+
+
+# --- 系统 & 环境配置 ---
+.bashrc
+.env
+.venv
+venv/
+env/
+

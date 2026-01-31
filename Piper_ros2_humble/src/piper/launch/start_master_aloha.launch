@@ -1,0 +1,16 @@
+<launch>
+  <!-- 定义 mode 参数，默认值为 0,读取主从臂的消息，并转发到ROS -->
+  <arg name="auto_enable" default="true" />
+  <!-- 启动左侧主机械臂节点 -->
+    <node name="$(anon piper_master_left)" pkg="piper" type="piper_start_master_node.py" output="screen">
+      <param name="can_port" value="can_left" />
+      <remap from="/master/joint_states" to="/master/joint_left" />
+    </node>
+
+  <!-- 启动右侧主机械臂节点 -->
+    <node name="$(anon piper_master_right)" pkg="piper" type="piper_start_master_node.py" output="screen">
+      <param name="can_port" value="can_right" />
+      <remap from="/master/joint_states" to="/master/joint_right" />
+    </node>
+</launch>
+

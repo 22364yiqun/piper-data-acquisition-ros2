@@ -9,13 +9,13 @@ import dm_env
 import collections
 from collections import deque
 
-import rospy
+import rclpy
+from rclpy.node import Node
 from sensor_msgs.msg import JointState, CameraInfo
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from cv_bridge import CvBridge
-import sys
 import cv2
 
 
@@ -301,14 +301,13 @@ def save_data(args, timesteps, timestamps, actions, dataset_path, cam_infos=None
                 ts.observation['extrinsic']['camera_right']
             )
 
-    # 自动识别第一帧深度图尺寸
-    depth_shape = None
+    # 自动识别每个相机的深度图尺寸
+    depth_shapes = {}
     if args.use_depth_image:
         for cam_name in args.camera_names:
             if len(data_dict[f'/observation/{cam_name}/depth']) > 0:
-                depth_shape = np.array(data_dict[f'/observation/{cam_name}/depth'][0]).shape
-                print(f"[INFO] Detected depth shape for {cam_name}: {depth_shape}")
-                break
+                depth_shapes[cam_name] = np.array(data_dict[f'/observation/{cam_name}/depth'][0]).shape
+                print(f"[INFO] Detected depth shape for {cam_name}: {depth_shapes[cam_name]}")
 
     t0 = time.time()
     with h5py.File(dataset_path + '.hdf5', 'w', rdcc_nbytes=1024**2*2) as root:
@@ -327,7 +326,8 @@ def save_data(args, timesteps, timestamps, actions, dataset_path, cam_infos=None
             cam_group["rgb"][...] = np.array(data_dict[f'/observation/{cam_name}/rgb'])
 
             # === Depth ===
-            if args.use_depth_image and depth_shape is not None:
+            if args.use_depth_image and cam_name in depth_shapes:
+                depth_shape = depth_shapes[cam_name]
                 cam_group.create_dataset(
                     "depth", (data_size, *depth_shape), dtype='uint16', chunks=(1, *depth_shape)
                 )
@@ -336,7 +336,7 @@ def save_data(args, timesteps, timestamps, actions, dataset_path, cam_infos=None
             # === Intrinsics ===
             if cam_infos and cam_name in cam_infos:
                 cam_info = cam_infos[cam_name]
-                P = np.array(cam_info.P, dtype=np.float32).reshape(3, 4)
+                P = np.array(cam_info.p, dtype=np.float32).reshape(3, 4)
 
                 cam_group.create_dataset("intrinsic_cv", data=P, dtype="float32")
 
@@ -388,13 +388,12 @@ def save_data(args, timesteps, timestamps, actions, dataset_path, cam_infos=None
     print(f'\033[32m\nSaving completed in {time.time() - t0:.1f}s → {dataset_path}.hdf5 \033[0m\n')
 
 
-class RosOperator:
+class RosOperator(Node):
     def __init__(self, args):
+        super().__init__('ros_operator')
         # self.robot_base_deque = None
         self.puppet_arm_right_deque = None
         self.puppet_arm_left_deque = None
-        # self.master_arm_right_deque = None
-        # self.master_arm_left_deque = None
         self.end_pose_left_deque = None
         self.end_pose_right_deque = None
         self.img_front_deque = None
@@ -430,8 +429,6 @@ class RosOperator:
         self.img_left_depth_deque = deque()
         self.img_right_depth_deque = deque()
         self.img_front_depth_deque = deque()
-        # self.master_arm_left_deque = deque()
-        # self.master_arm_right_deque = deque()
         self.puppet_arm_left_deque = deque()
         self.puppet_arm_right_deque = deque()
         self.cam_info_left_deque = deque()
@@ -439,51 +436,55 @@ class RosOperator:
         self.cam_info_right_deque = deque()
         self.end_pose_left_deque = deque() 
         self.end_pose_right_deque = deque() 
-        # self.robot_base_deque = deque()
 
     def get_frame(self):
 
         if len(self.img_left_deque) == 0 or len(self.img_right_deque) == 0 or len(self.img_front_deque) == 0 or \
                 (self.args.use_depth_image and (len(self.img_left_depth_deque) == 0 or len(self.img_right_depth_deque) == 0 or len(self.img_front_depth_deque) == 0)):
             return False
-        if self.args.use_depth_image:
-            frame_time = min([self.img_left_deque[-1].header.stamp.to_sec(), self.img_right_deque[-1].header.stamp.to_sec(), self.img_front_deque[-1].header.stamp.to_sec(),
-                              self.img_left_depth_deque[-1].header.stamp.to_sec(), self.img_right_depth_deque[-1].header.stamp.to_sec(), self.img_front_depth_deque[-1].header.stamp.to_sec()])
-        else:
-            frame_time = min([self.img_left_deque[-1].header.stamp.to_sec(), self.img_right_deque[-1].header.stamp.to_sec(), self.img_front_deque[-1].header.stamp.to_sec()])
-
-        if len(self.img_left_deque) == 0 or self.img_left_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        if len(self.img_right_deque) == 0 or self.img_right_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        if len(self.img_front_deque) == 0 or self.img_front_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        # if len(self.master_arm_left_deque) == 0 or self.master_arm_left_deque[-1].header.stamp.to_sec() < frame_time:
-        #     return False
-        # if len(self.master_arm_right_deque) == 0 or self.master_arm_right_deque[-1].header.stamp.to_sec() < frame_time:
-        #     return False
-        if len(self.puppet_arm_left_deque) == 0 or self.puppet_arm_left_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        if len(self.puppet_arm_right_deque) == 0 or self.puppet_arm_right_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        if self.args.use_depth_image and (len(self.img_left_depth_deque) == 0 or self.img_left_depth_deque[-1].header.stamp.to_sec() < frame_time):
-            return False
-        if self.args.use_depth_image and (len(self.img_right_depth_deque) == 0 or self.img_right_depth_deque[-1].header.stamp.to_sec() < frame_time):
-            return False
-        if self.args.use_depth_image and (len(self.img_front_depth_deque) == 0 or self.img_front_depth_deque[-1].header.stamp.to_sec() < frame_time):
-            return False
-        # if self.args.use_robot_base and (len(self.robot_base_deque) == 0 or self.robot_base_deque[-1].header.stamp.to_sec() < frame_time):
-        #     return False
-        if len(self.end_pose_left_deque) == 0 or self.end_pose_left_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
-        if len(self.end_pose_right_deque) == 0 or self.end_pose_right_deque[-1].header.stamp.to_sec() < frame_time:
-            return False
         
-        while self.end_pose_left_deque[0].header.stamp.to_sec() < frame_time:
+        # ROS2时间戳转换
+        def stamp_to_sec(stamp):
+            return stamp.sec + stamp.nanosec * 1e-9
+
+        if self.args.use_depth_image:
+            frame_time = min([stamp_to_sec(self.img_left_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_right_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_front_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_left_depth_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_right_depth_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_front_depth_deque[-1].header.stamp)])
+        else:
+            frame_time = min([stamp_to_sec(self.img_left_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_right_deque[-1].header.stamp),
+                                stamp_to_sec(self.img_front_deque[-1].header.stamp)])
+
+        if len(self.img_left_deque) == 0 or stamp_to_sec(self.img_left_deque[-1].header.stamp) < frame_time:
+            return False
+        if len(self.img_right_deque) == 0 or stamp_to_sec(self.img_right_deque[-1].header.stamp) < frame_time:
+            return False
+        if len(self.img_front_deque) == 0 or stamp_to_sec(self.img_front_deque[-1].header.stamp) < frame_time:
+            return False
+        if len(self.puppet_arm_left_deque) == 0 or stamp_to_sec(self.puppet_arm_left_deque[-1].header.stamp) < frame_time:
+            return False
+        if len(self.puppet_arm_right_deque) == 0 or stamp_to_sec(self.puppet_arm_right_deque[-1].header.stamp) < frame_time:
+            return False
+        if self.args.use_depth_image and (len(self.img_left_depth_deque) == 0 or stamp_to_sec(self.img_left_depth_deque[-1].header.stamp) < frame_time):
+            return False
+        if self.args.use_depth_image and (len(self.img_right_depth_deque) == 0 or stamp_to_sec(self.img_right_depth_deque[-1].header.stamp) < frame_time):
+            return False
+        if self.args.use_depth_image and (len(self.img_front_depth_deque) == 0 or stamp_to_sec(self.img_front_depth_deque[-1].header.stamp) < frame_time):
+            return False
+        if len(self.end_pose_left_deque) == 0 or stamp_to_sec(self.end_pose_left_deque[-1].header.stamp) < frame_time:
+            return False
+        if len(self.end_pose_right_deque) == 0 or stamp_to_sec(self.end_pose_right_deque[-1].header.stamp) < frame_time:
+            return False
+
+        while stamp_to_sec(self.end_pose_left_deque[0].header.stamp) < frame_time:
             self.end_pose_left_deque.popleft()
         end_pose_left_msg = self.end_pose_left_deque.popleft()
 
-        while self.end_pose_right_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.end_pose_right_deque[0].header.stamp) < frame_time:
             self.end_pose_right_deque.popleft()
         end_pose_right_msg = self.end_pose_right_deque.popleft()
 
@@ -507,38 +508,29 @@ class RosOperator:
         end_pose_right_msg.pose.orientation.w
         ], dtype=np.float32)
     
-        while self.img_left_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.img_left_deque[0].header.stamp) < frame_time:
             self.img_left_deque.popleft()
         img_left = self.bridge.imgmsg_to_cv2(self.img_left_deque.popleft(), 'passthrough')
-        # print("img_left:", img_left.shape)
 
-        while self.img_right_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.img_right_deque[0].header.stamp) < frame_time:
             self.img_right_deque.popleft()
         img_right = self.bridge.imgmsg_to_cv2(self.img_right_deque.popleft(), 'passthrough')
 
-        while self.img_front_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.img_front_deque[0].header.stamp) < frame_time:
             self.img_front_deque.popleft()
         img_front = self.bridge.imgmsg_to_cv2(self.img_front_deque.popleft(), 'passthrough')
 
-        # while self.master_arm_left_deque[0].header.stamp.to_sec() < frame_time:
-        #     self.master_arm_left_deque.popleft()
-        # master_arm_left = self.master_arm_left_deque.popleft()
-
-        # while self.master_arm_right_deque[0].header.stamp.to_sec() < frame_time:
-        #     self.master_arm_right_deque.popleft()
-        # master_arm_right = self.master_arm_right_deque.popleft()
-
-        while self.puppet_arm_left_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.puppet_arm_left_deque[0].header.stamp) < frame_time:
             self.puppet_arm_left_deque.popleft()
         puppet_arm_left = self.puppet_arm_left_deque.popleft()
 
-        while self.puppet_arm_right_deque[0].header.stamp.to_sec() < frame_time:
+        while stamp_to_sec(self.puppet_arm_right_deque[0].header.stamp) < frame_time:
             self.puppet_arm_right_deque.popleft()
         puppet_arm_right = self.puppet_arm_right_deque.popleft()
 
         img_left_depth = None
         if self.args.use_depth_image:
-            while self.img_left_depth_deque[0].header.stamp.to_sec() < frame_time:
+            while stamp_to_sec(self.img_left_depth_deque[0].header.stamp) < frame_time:
                 self.img_left_depth_deque.popleft()
             img_left_depth = self.bridge.imgmsg_to_cv2(self.img_left_depth_deque.popleft(), 'passthrough')
             top, bottom, left, right = 40, 40, 0, 0
@@ -546,25 +538,21 @@ class RosOperator:
 
         img_right_depth = None
         if self.args.use_depth_image:
-            while self.img_right_depth_deque[0].header.stamp.to_sec() < frame_time:
+            while stamp_to_sec(self.img_right_depth_deque[0].header.stamp) < frame_time:
                 self.img_right_depth_deque.popleft()
             img_right_depth = self.bridge.imgmsg_to_cv2(self.img_right_depth_deque.popleft(), 'passthrough')
-        top, bottom, left, right = 40, 40, 0, 0
-        img_right_depth = cv2.copyMakeBorder(img_right_depth, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+            top, bottom, left, right = 40, 40, 0, 0
+            img_right_depth = cv2.copyMakeBorder(img_right_depth, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
 
         img_front_depth = None
         if self.args.use_depth_image:
-            while self.img_front_depth_deque[0].header.stamp.to_sec() < frame_time:
+            while stamp_to_sec(self.img_front_depth_deque[0].header.stamp) < frame_time:
                 self.img_front_depth_deque.popleft()
             img_front_depth = self.bridge.imgmsg_to_cv2(self.img_front_depth_deque.popleft(), 'passthrough')
-        top, bottom, left, right = 40, 40, 0, 0
-        img_front_depth = cv2.copyMakeBorder(img_front_depth, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+            top, bottom, left, right = 40, 40, 0, 0
+            img_front_depth = cv2.copyMakeBorder(img_front_depth, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
 
-        # robot_base = None
-        # if self.args.use_robot_base:
-        #     while self.robot_base_deque[0].header.stamp.to_sec() < frame_time:
-        #         self.robot_base_deque.popleft()
-        #     robot_base = self.robot_base_deque.popleft()
+    
         return (img_front, img_left, img_right, img_front_depth, img_left_depth, img_right_depth,
                 puppet_arm_left, puppet_arm_right,end_pose_left, end_pose_right)
 
@@ -632,25 +620,22 @@ class RosOperator:
     
 
     def init_ros(self):
-        rospy.init_node('record_episodes', anonymous=True)
-        rospy.Subscriber(self.args.img_left_topic, Image, self.img_left_callback, queue_size=1000, tcp_nodelay=True)
-        rospy.Subscriber(self.args.img_right_topic, Image, self.img_right_callback, queue_size=1000, tcp_nodelay=True)
-        rospy.Subscriber(self.args.img_front_topic, Image, self.img_front_callback, queue_size=1000, tcp_nodelay=True)
+        self.create_subscription(Image, self.args.img_left_topic, self.img_left_callback, 1000)
+        self.create_subscription(Image, self.args.img_right_topic, self.img_right_callback, 1000)
+        self.create_subscription(Image, self.args.img_front_topic, self.img_front_callback, 1000)
+
         if self.args.use_depth_image:
-            rospy.Subscriber(self.args.img_left_depth_topic, Image, self.img_left_depth_callback, queue_size=1000, tcp_nodelay=True)
-            rospy.Subscriber(self.args.img_right_depth_topic, Image, self.img_right_depth_callback, queue_size=1000, tcp_nodelay=True)
-            rospy.Subscriber(self.args.img_front_depth_topic, Image, self.img_front_depth_callback, queue_size=1000, tcp_nodelay=True)
-        
-        rospy.Subscriber(self.args.puppet_arm_left_topic, JointState, self.puppet_arm_left_callback, queue_size=1000, tcp_nodelay=True)
-        rospy.Subscriber(self.args.puppet_arm_right_topic, JointState, self.puppet_arm_right_callback, queue_size=1000, tcp_nodelay=True)
-        rospy.Subscriber(self.args.cam_info_left_topic, CameraInfo, self.cam_info_left_callback, queue_size=1000, tcp_nodelay=True)
-        #右相机
-        rospy.Subscriber(self.args.cam_info_right_topic, CameraInfo, self.cam_info_right_callback, queue_size=1000, tcp_nodelay=True)
-        # 中相机
-        rospy.Subscriber(self.args.cam_info_front_topic, CameraInfo, self.cam_info_middle_callback, queue_size=1000, tcp_nodelay=True)
-        
-        rospy.Subscriber(self.args.end_pose_left_topic, PoseStamped, self.end_pose_left_callback, queue_size=1000, tcp_nodelay=True)
-        rospy.Subscriber(self.args.end_pose_right_topic, PoseStamped, self.end_pose_right_callback, queue_size=1000, tcp_nodelay=True)
+            self.create_subscription(Image, self.args.img_left_depth_topic, self.img_left_depth_callback, 1000)
+            self.create_subscription(Image, self.args.img_right_depth_topic, self.img_right_depth_callback, 1000)
+            self.create_subscription(Image, self.args.img_front_depth_topic, self.img_front_depth_callback, 1000)
+
+        self.create_subscription(JointState, self.args.puppet_arm_left_topic, self.puppet_arm_left_callback, 1000)
+        self.create_subscription(JointState, self.args.puppet_arm_right_topic, self.puppet_arm_right_callback, 1000)
+        self.create_subscription(CameraInfo, self.args.cam_info_left_topic, self.cam_info_left_callback, 1000)
+        self.create_subscription(CameraInfo, self.args.cam_info_right_topic, self.cam_info_right_callback, 1000)
+        self.create_subscription(CameraInfo, self.args.cam_info_front_topic, self.cam_info_middle_callback, 1000)
+        self.create_subscription(PoseStamped, self.args.end_pose_left_topic, self.end_pose_left_callback, 1000)
+        self.create_subscription(PoseStamped, self.args.end_pose_right_topic, self.end_pose_right_callback, 1000)
 
 
     def process(self):
@@ -671,17 +656,19 @@ class RosOperator:
             image_dict[cam_name] = image
         count = 0
 
-        rate = rospy.Rate(self.args.frame_rate)
         print_flag = True
 
-        while (count < self.args.max_timesteps + 1) and not rospy.is_shutdown():
+        while (count < self.args.max_timesteps + 1) and rclpy.ok():
+            # Spin once to process callbacks
+            rclpy.spin_once(self, timeout_sec=0.01)
+
             # 2 收集数据
             result = self.get_frame()
             if not result:
                 if print_flag:
                     print("syn fail")
                     print_flag = False
-                rate.sleep()
+                time.sleep(1.0 / self.args.frame_rate)
                 continue
             print_flag = True
             count += 1
@@ -689,7 +676,7 @@ class RosOperator:
              puppet_arm_left, puppet_arm_right,end_pose_left,end_pose_right) = result
             
             stamp = puppet_arm_left.header.stamp
-            stamp_sec = stamp.secs + stamp.nsecs * 1e-9
+            stamp_sec = stamp.sec + stamp.nanosec * 1e-9
             timestamps.append(stamp_sec)
 
             # 2.1 图像信息
@@ -763,9 +750,9 @@ class RosOperator:
 
             print("Frame data: ", count)
 
-            if rospy.is_shutdown():
-                exit(-1)
-            rate.sleep()
+            if not rclpy.ok():
+                  exit(-1)
+            time.sleep(1.0 / self.args.frame_rate)
 
         print("len(timesteps): ", len(timesteps))
         print("len(actions)  : ", len(actions))
@@ -799,26 +786,26 @@ def get_arguments():
                         default=['camera_middle', 'camera_left', 'camera_right'], required=False)
     #  topic name of color image
     parser.add_argument('--img_front_topic', action='store', type=str, help='img_front_topic',
-                        default='/camera_middle/color/image_raw', required=False)
+                        default='/camera_middle/realsense2_camera_node/color/image_raw', required=False)
     parser.add_argument('--img_left_topic', action='store', type=str, help='img_left_topic',
-                        default='/camera_left/color/image_raw', required=False)
+                        default='/camera_left/realsense2_camera_node/color/image_raw', required=False)
     parser.add_argument('--img_right_topic', action='store', type=str, help='img_right_topic',
-                        default='/camera_right/color/image_raw', required=False)
-    
+                        default='/camera_right/realsense2_camera_node/color/image_raw', required=False)
+
     # topic name of depth image
     parser.add_argument('--img_front_depth_topic', action='store', type=str, help='img_front_depth_topic',
-                        default='/camera_middle/depth/image_rect_raw', required=False)
+                        default='/camera_middle/realsense2_camera_node/depth/image_rect_raw', required=False)
     parser.add_argument('--img_left_depth_topic', action='store', type=str, help='img_left_depth_topic',
-                        default='/camera_left/depth/image_rect_raw', required=False)
+                        default='/camera_left/realsense2_camera_node/depth/image_rect_raw', required=False)
     parser.add_argument('--img_right_depth_topic', action='store', type=str, help='img_right_depth_topic',
-                        default='/camera_right/depth/image_rect_raw', required=False)
-    
+                        default='/camera_right/realsense2_camera_node/depth/image_rect_raw', required=False)
+
     parser.add_argument('--cam_info_front_topic', type=str,
-                    default='/camera_middle/color/camera_info', required=False)
+                    default='/camera_middle/realsense2_camera_node/color/camera_info', required=False)
     parser.add_argument('--cam_info_left_topic', type=str,
-                    default='/camera_left/color/camera_info', required=False)
+                    default='/camera_left/realsense2_camera_node/color/camera_info', required=False)
     parser.add_argument('--cam_info_right_topic', type=str,
-                    default='/camera_right/color/camera_info', required=False)
+                    default='/camera_right/realsense2_camera_node/color/camera_info', required=False)
 
 
     
@@ -828,12 +815,6 @@ def get_arguments():
     parser.add_argument('--puppet_arm_right_topic', action='store', type=str, help='puppet_arm_right_topic',
                         default='/puppet/joint_right', required=False)
     
-    # topic name of robot_base
-    # parser.add_argument('--robot_base_topic', action='store', type=str, help='robot_base_topic',
-    #                     default='/odom', required=False)
-    
-    # parser.add_argument('--use_robot_base', action='store', type=bool, help='use_robot_base',
-    #                     default=False, required=False)
     # collect depth image
     parser.add_argument('--use_depth_image', action='store', type=bool, help='use_depth_image',
                         default=True, required=False)
@@ -865,21 +846,30 @@ def get_arguments():
 
 import json
 
-def main():
-    args = get_arguments()
-    ros_operator = RosOperator(args)
-    timesteps, actions, timestamps = ros_operator.process()
+def main(args=None):
+    rclpy.init(args=args)
 
-    dataset_dir = os.path.join(args.dataset_dir, args.task_name)
-    if len(actions) < args.max_timesteps:
-        print(f"\033[31m\nSave failure, please record {args.max_timesteps} timesteps of data.\033[0m\n")
-        exit(-1)
+    cmd_args = get_arguments()
+    ros_operator = RosOperator(cmd_args)
 
-    os.makedirs(dataset_dir, exist_ok=True)
-    dataset_path = os.path.join(dataset_dir, f"episode_{args.episode_idx}")
+    try:
+        timesteps, actions, timestamps = ros_operator.process()
 
-    save_data(args, timesteps, timestamps, actions, dataset_path, ros_operator.cam_infos)
+        dataset_dir = os.path.join(cmd_args.dataset_dir, cmd_args.task_name)
+        if len(actions) < cmd_args.max_timesteps:
+            print(f"\033[31m\nSave failure, please record {cmd_args.max_timesteps} timesteps of data.\033[0m\n")
+            exit(-1)
 
+        os.makedirs(dataset_dir, exist_ok=True)
+        dataset_path = os.path.join(dataset_dir, f"episode_{cmd_args.episode_idx}")
+
+        save_data(cmd_args, timesteps, timestamps, actions, dataset_path, ros_operator.cam_infos)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ros_operator.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

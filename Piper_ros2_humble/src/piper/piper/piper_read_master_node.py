@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # -*-coding:utf8-*-
 # 本文件为读取主臂发送的消息，当机械臂设置为主臂，主臂只发送关节角消息和控制指令
-from typing import (
-    Optional,
-)
 from piper_sdk import *
 
 import rclpy

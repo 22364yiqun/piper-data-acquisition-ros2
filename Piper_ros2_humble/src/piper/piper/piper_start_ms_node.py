@@ -6,14 +6,14 @@
 # mode为1时为控制从臂，不发送主臂消息，此时如果要控制从臂，需要给主臂的topic发送消息
 
 import rclpy
-from rclpy import Node
+from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool
 from piper_msgs.msg import PiperStatusMsg, PosCmd
 from geometry_msgs.msg import Pose,PoseStamped
-from std_srvs.srv import Trigger, TriggerResponse
+from std_srvs.srv import Trigger
 
 import time
 import threading
@@ -23,16 +23,8 @@ import math
 from piper_sdk import *
 from piper_sdk import C_PiperInterface
 
-# from tf.transformations import quaternion_from_euler  # 用于欧拉角到四元数的转换
-import tf_transformations
+from scipy.spatial.transform import Rotation
 
-def check_ros_master():
-    try:
-        rosnode.rosnode_ping('rosout', max_count=1, verbose=False)
-        rospy.loginfo("ROS Master is running.")
-    except rosnode.ROSNodeIOException:
-        rospy.logerr("ROS Master is not running.")
-        raise RuntimeError("ROS Master is not running.")
 
 class C_PiperRosNode(Node):
     """机械臂ros节点
@@ -78,8 +70,10 @@ class C_PiperRosNode(Node):
         self.joint_state_master.velocity = [0.0] * 7
         self.joint_state_master.effort = [0.0] * 7
 
+        # 硬件连接 实例化SDK接口，并且使用物理can口进行连接
         self.piper = C_PiperInterface(can_name=self.can_port)
         self.piper.ConnectPort()
+
         # service
         str_can_port = str(self.can_port)
         # 主臂单独回零
@@ -102,7 +96,7 @@ class C_PiperRosNode(Node):
     def GetEnableFlag(self):
         return self.__enable_flag
 
-    def Pubilsh(self):
+    def Publish(self):
         """机械臂消息发布
         """
         enable_flag = False
@@ -142,9 +136,9 @@ class C_PiperRosNode(Node):
                 print("程序自动使能超时,退出程序")
                 exit(0)
             # 发布消息
-            self.PublishSlaveArmJointAndGripper()
-            self.PublishSlaveArmState()
-            self.PublishSlaveArmEndPose()
+            self.PublishSlaveArmJointAndGripper()   # 发布从臂关节
+            self.PublishSlaveArmState()             # 发布错误码和状态
+            self.PublishSlaveArmEndPose()           # 发布末端坐标
             # 模式为0的时候，发布主臂消息
             if(self.mode == 0):
                 self.PublishMasterArmJointAndGripper()
@@ -186,7 +180,9 @@ class C_PiperRosNode(Node):
         roll = math.radians(roll)
         pitch = math.radians(pitch)
         yaw = math.radians(yaw)
-        quaternion = tf_transformations.quaternion_from_euler(roll, pitch, yaw)
+        # 使用 scipy 进行欧拉角到四元数的转换 (roll, pitch, yaw 对应 xyz)
+        rotation = Rotation.from_euler('xyz', [roll, pitch, yaw])
+        quaternion = rotation.as_quat()  # 返回 [x, y, z, w]
         endpos.pose.orientation.x = quaternion[0]
         endpos.pose.orientation.y = quaternion[1]
         endpos.pose.orientation.z = quaternion[2]
@@ -209,6 +205,8 @@ class C_PiperRosNode(Node):
     
     def PublishSlaveArmJointAndGripper(self):
         # 从臂反馈消息
+
+        # 时间戳
         self.joint_state_slave.header.stamp = self.get_clock().now().to_msg()
         joint_0:float = (self.piper.GetArmJointMsgs().joint_state.joint_1/1000) * 0.017444
         joint_1:float = (self.piper.GetArmJointMsgs().joint_state.joint_2/1000) * 0.017444
@@ -327,6 +325,9 @@ class C_PiperRosNode(Node):
             self.piper.GripperCtrl(0,1000,0x00, 0)
     
     def handle_master_go_zero_service(self,requset,response):
+        '''
+        没有用处，没有意义
+        ''' 
         self.get_logger().info("-----------------------RESET---------------------------")
         self.get_logger().info(f"{self.can_port} send piper master go zero service")
         self.get_logger().info("-----------------------RESET---------------------------")

@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'piper'
 
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +27,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'piper_start_master_node = piper.piper_start_master_node:main',
+            'piper_start_slave_node = piper.piper_start_slave_node:main',
+            'piper_read_master_node = piper.piper_read_master_node:main',
+            'piper_start_ms_node = piper.piper_start_ms_node:main',
         ],
     },
 )

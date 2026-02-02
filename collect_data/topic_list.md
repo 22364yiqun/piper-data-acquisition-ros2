@@ -1,4 +1,3 @@
-'''
 /camera_left/color/camera_info
 /camera_left/color/image_raw
 /camera_left/color/image_raw/compressed
@@ -122,4 +121,3 @@
 /rosout_agg
 /tf
 /tf_static
-'''

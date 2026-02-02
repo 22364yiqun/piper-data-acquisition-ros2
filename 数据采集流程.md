@@ -9,6 +9,172 @@
 
 ---
 
+## 环境配置
+
+### 安装 Intel RealSense SDK
+
+```bash
+# 1. 添加 Intel RealSense 软件源
+sudo mkdir -p /etc/apt/keyrings
+curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | sudo tee /etc/apt/keyrings/librealsense.pgp > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" | \
+sudo tee /etc/apt/sources.list.d/librealsense.list
+sudo apt update
+
+# 2. 安装 RealSense SDK
+sudo apt install librealsense2-dkms librealsense2-utils librealsense2-dev -y
+
+# 3. 验证安装（插入相机后执行）
+realsense-viewer  # 打开相机查看器，应该能看到相机图像
+
+# 4. 检查已连接的 RealSense 设备
+rs-enumerate-devices
+```
+
+### 安装 CAN 通信工具
+
+```bash
+# 安装 CAN 工具包
+sudo apt install can-utils ethtool -y
+
+# 加载 gs_usb 内核模块
+sudo modprobe gs_usb
+
+# 设置开机自动加载 gs_usb 模块
+echo "gs_usb" | sudo tee -a /etc/modules
+
+# 验证 CAN 设备（插入 USB-CAN 设备后执行）
+lsusb | grep -i can
+# 应该看到 CAN 转换器设备
+```
+
+### 配置 Python 环境
+
+```bash
+# 1. 确保使用 Python 3.10+
+python3 --version
+# 应该显示：Python 3.10.x
+
+# 2. 安装 pip
+sudo apt install python3-pip -y
+
+# 3. 安装数据采集所需的 Python 库
+pip3 install h5py dm_env numpy opencv-python
+
+# 4. 安装 ROS2 Python 桥接库
+sudo apt install ros-humble-cv-bridge python3-cv-bridge -y
+
+# 5. 验证安装
+python3 -c "import h5py; import numpy; import cv2; print('Python dependencies OK')"
+```
+
+
+### 编译 RealSense 相机工作空间
+
+```bash
+# 1. 进入相机工作空间
+cd ~/code/cobot_magic_ros2/camera_ws
+
+# 2. 安装依赖
+sudo apt install ros-humble-realsense2-camera-msgs -y
+
+# 3. 编译
+colcon build
+
+# 4. 验证编译成功
+source install/setup.bash
+ros2 pkg list | grep realsense
+# 应该看到：
+# realsense2_camera
+# realsense2_camera_msgs
+# realsense2_description
+```
+
+### 编译 Piper 机械臂工作空间
+
+```bash
+# 1. 进入 Piper 工作空间
+cd ~/code/cobot_magic_ros2/Piper_ros2_humble
+
+# 2. 编译
+colcon build
+
+# 3. 验证编译成功
+source install/setup.bash
+ros2 pkg list | grep piper
+# 应该看到：
+# piper
+# piper_msgs
+```
+
+### 配置 CAN 设备映射
+
+在启动机械臂前，需要配置 CAN 设备与左右臂的映射关系。
+
+```bash
+cd ~/code/cobot_magic_ros2/Piper_ros2_humble
+
+# 1. 查看当前的 CAN 配置脚本
+cat can_config.sh
+
+# 2. 插入第一个 USB-CAN 设备，查看其 USB 地址
+sudo ethtool -i can0 | grep bus
+# 记录 bus-info 显示的地址，例如：1-8:1.0
+
+# 3. 插入第二个 USB-CAN 设备到不同的 USB 口，查看地址
+sudo ethtool -i can1 | grep bus
+# 记录 bus-info 显示的地址，例如：1-9.1:1.0
+
+# 4. 编辑 can_config.sh，修改 USB_PORTS 映射
+# 找到这两行，替换为实际的 USB 地址：
+#   USB_PORTS["1-8:1.0"]="can_left:1000000"
+#   USB_PORTS["1-9.1:1.0"]="can_right:1000000"
+```
+
+**重要说明：**
+- `can_left` 对应左侧机械臂
+- `can_right` 对应右侧机械臂
+- USB 地址需要与实际插入的 USB 口对应
+- 波特率设置为 1000000（1Mbps）
+
+### 配置相机序列号映射
+
+```bash
+cd ~/code/cobot_magic_ros2/camera_ws/src/realsense-ros/realsense2_camera/launch
+
+# 1. 查看已连接相机的序列号
+rs-enumerate-devices | grep "Serial Number"
+# 记录三个相机的序列号
+
+# 2. 编辑多相机启动文件
+nano multi_camera.launch.py
+# 或使用你喜欢的编辑器
+
+# 3. 在文件中找到相机配置部分，修改序列号为实际值：
+#   camera_left:   serial_no='<左相机序列号>'
+#   camera_middle: serial_no='<中相机序列号>'
+#   camera_right:  serial_no='<右相机序列号>'
+```
+
+### 环境配置验证清单
+
+在开始数据采集前，请确认以下所有项目：
+
+- [ ] ROS2 Humble 已安装并可运行 `ros2 --version`
+- [ ] Intel RealSense SDK 已安装并可运行 `realsense-viewer`
+- [ ] CAN 工具已安装并可运行 `candump --help`
+- [ ] Python 依赖已安装（h5py, dm_env, numpy, opencv-python）
+- [ ] camera_ws 已成功编译
+- [ ] Piper_ros2_humble 已成功编译
+- [ ] 三个 RealSense 相机已连接并可被 `rs-enumerate-devices` 识别
+- [ ] 两个 USB-CAN 设备已连接并配置在 `can_config.sh` 中
+- [ ] 相机序列号已配置在 `multi_camera.launch.py` 中
+- [ ] 主从机械臂已通过航插线连接
+
+完成以上所有步骤后，环境配置完成，可以继续执行数据采集流程。
+
+---
+
 ## 一、系统准备和检查
 
 ### 1.1 硬件连接检查

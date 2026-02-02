@@ -786,26 +786,26 @@ def get_arguments():
                         default=['camera_middle', 'camera_left', 'camera_right'], required=False)
     #  topic name of color image
     parser.add_argument('--img_front_topic', action='store', type=str, help='img_front_topic',
-                        default='/camera_middle/realsense2_camera_node/color/image_raw', required=False)
+                        default='/camera_middle/color/image_raw', required=False)
     parser.add_argument('--img_left_topic', action='store', type=str, help='img_left_topic',
-                        default='/camera_left/realsense2_camera_node/color/image_raw', required=False)
+                        default='/camera_left/color/image_raw', required=False)
     parser.add_argument('--img_right_topic', action='store', type=str, help='img_right_topic',
-                        default='/camera_right/realsense2_camera_node/color/image_raw', required=False)
+                        default='/camera_right/color/image_raw', required=False)
 
     # topic name of depth image
     parser.add_argument('--img_front_depth_topic', action='store', type=str, help='img_front_depth_topic',
-                        default='/camera_middle/realsense2_camera_node/depth/image_rect_raw', required=False)
+                        default='/camera_middle/depth/image_rect_raw', required=False)
     parser.add_argument('--img_left_depth_topic', action='store', type=str, help='img_left_depth_topic',
-                        default='/camera_left/realsense2_camera_node/depth/image_rect_raw', required=False)
+                        default='/camera_left/depth/image_rect_raw', required=False)
     parser.add_argument('--img_right_depth_topic', action='store', type=str, help='img_right_depth_topic',
-                        default='/camera_right/realsense2_camera_node/depth/image_rect_raw', required=False)
+                        default='/camera_right/depth/image_rect_raw', required=False)
 
     parser.add_argument('--cam_info_front_topic', type=str,
-                    default='/camera_middle/realsense2_camera_node/color/camera_info', required=False)
+                    default='/camera_middle/color/camera_info', required=False)
     parser.add_argument('--cam_info_left_topic', type=str,
-                    default='/camera_left/realsense2_camera_node/color/camera_info', required=False)
+                    default='/camera_left/color/camera_info', required=False)
     parser.add_argument('--cam_info_right_topic', type=str,
-                    default='/camera_right/realsense2_camera_node/color/camera_info', required=False)
+                    default='/camera_right/color/camera_info', required=False)
 
 
     
